@@ -22,6 +22,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/opencharly/sdk"
 	pb "github.com/opencharly/spec/proto"
@@ -48,9 +49,10 @@ func NewMeta() pb.PluginMetaServer {
 type provider struct{ pb.UnimplementedProviderServer }
 
 // Invoke handles OpLoad: decode the group's TARGETLESS scalar config from op.Params into a spec.Deploy
-// (the host validated it against #GroupInput first), attach the host-threaded AUTHORED members from
-// op.Env, force Target="" (a group has no own workload — its members are PEERS, exactly as the former
-// builtin groupKind via fleetTargetForDisc("group")=""), and return the complete spec.Deploy.
+// (the host validated it against #GroupInput first), reconstruct the host-threaded AUTHORED member
+// tree from op.Env into spec.Deploy.Member (every entry a deploy-level PEER — a group has no venue
+// of its own), force Target="" (exactly as the former builtin groupKind via
+// fleetTargetForDisc("group")=""), and return the complete spec.Deploy.
 func (provider) Invoke(_ context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
 	if req.GetOp() != sdk.OpLoad {
 		return nil, fmt.Errorf("group kind: unsupported op %q (only %q)", req.GetOp(), sdk.OpLoad)
@@ -69,11 +71,23 @@ func (provider) Invoke(_ context.Context, req *pb.InvokeRequest) (*pb.InvokeRepl
 			return nil, fmt.Errorf("group kind: decode member env: %w", err)
 		}
 	}
-	// A group is TARGETLESS: no own workload, members are PEERS (Members). Force these so an authored
-	// stray target/member can never leak (they are loader-derived; #GroupInput never admits them).
+	// A group is TARGETLESS: no own workload, every threaded member is a PEER brought up ALONGSIDE
+	// on the shared network. Reconstruct the ONE ordered member tree (spec.Deploy.Member): each env
+	// entry becomes a Member stamped Position deploy-level (Alongside) — the derived class the
+	// former dual Members map encoded — so the host fold consults the tree positionally
+	// (DeployLevelMembers / MemberByName / HasMembers), never a dual map. An authored stray target
+	// can never leak (loader-derived; #GroupInput never admits one). The env carries a map, so the
+	// authored order is unavailable this side: the tree is emitted in sorted-name order — the
+	// deterministic canonical order.
 	dep.Target = ""
-	dep.Members = env.Members
-	dep.Children = nil
+	names := make([]string, 0, len(env.Members))
+	for name := range env.Members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		dep.Member = append(dep.Member, spec.Member{Name: name, Position: spec.PositionDeployLevel, Node: env.Members[name]})
+	}
 	out, err := json.Marshal(dep)
 	if err != nil {
 		return nil, fmt.Errorf("group kind: marshal deploy: %w", err)
