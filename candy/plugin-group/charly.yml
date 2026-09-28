@@ -1,7 +1,5 @@
-version: 2026.232.0520
 plugin-group:
     candy:
-        version: 2026.182.0440
         description: |-
             The `group` STRUCTURAL deploy KIND relocated into a candy (C2-group): a TARGETLESS deploy
             group (resource members brought up ALONGSIDE on the shared network, no own workload). Its
